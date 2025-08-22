@@ -7,7 +7,7 @@ import torch
 import easyocr
 
 # App title
-st.title("YOLO License Plate Detection (Image & Video)")
+st.title("YOLO License Plate Detection")
 
 # Detect device
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -142,3 +142,4 @@ else:
         if texts:
             st.subheader("Detected License Plate Numbers:")
             st.write(texts)
+
