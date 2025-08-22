@@ -12,13 +12,16 @@ st.title("YOLO License Plate Detection (Image & Video)")
 
 # Detect device (GPU or CPU)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"✅ Using device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device=="cuda" else ""))
+print(f"Using device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device=="cuda" else ""))
 
-# OCR Engine (only EasyOCR)
+# Initialize EasyOCR reader
 reader = easyocr.Reader(['en'], gpu=(device=="cuda"))
 
 # Ensure temp directory exists
 os.makedirs("temp", exist_ok=True)
+
+# Demo image (root folder)
+DEMO_IMAGE = "demo_image.jpg"  # Place your demo image in root
 
 # File uploader
 uploaded_file = st.file_uploader(
@@ -26,122 +29,110 @@ uploaded_file = st.file_uploader(
     type=["jpg", "jpeg", "png", "bmp", "mp4", "avi", "mov", "mkv"]
 )
 
-# Demo image path in repo root
-demo_image_path = "demo_image.jpg"  # Replace with your demo image filename
-
 # Load YOLO model
 try:
-    model = YOLO("best.pt")  # Replace with your YOLO model
+    model = YOLO("best.pt")  # Replace with your trained YOLO model
 except Exception as e:
     st.error(f"Error loading YOLO model: {e}")
 
 # OCR helper function
 def run_ocr(roi):
+    """Run OCR on ROI using EasyOCR"""
     results = reader.readtext(roi)
     texts = [res[1] for res in results if res[1].strip() != ""]
     return " ".join(texts).strip()
 
-# Image processing
-def predict_and_save_image(path, output_path):
-    try:
-        results = model.predict(path, device=device)
-        image = cv2.imread(path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        detected_texts = []
+# Process image
+def predict_and_save_image(path):
+    image = cv2.imread(path)
+    results = model.predict(path, device=device)
 
+    detected_texts = []
+
+    for result in results:
+        for box in result.boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            # Draw bounding box
+            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            roi = image[y1:y2, x1:x2]
+            text = run_ocr(roi)
+            if text:
+                detected_texts.append(text)
+                # Draw OCR text
+                cv2.putText(image, text, (x1, max(y1 - 10,0)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    return image_rgb, detected_texts
+
+# Process video
+def predict_and_plot_video(video_path, output_path):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        st.error(f"Error opening video file: {video_path}")
+        return None, []
+
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS)) or 25
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # Use mp4v for compatibility
+    out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
+    detected_texts = []
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        results = model.predict(frame, device=device)
         for result in results:
             for box in result.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                roi = image[y1:y2, x1:x2]
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                roi = frame[y1:y2, x1:x2]
                 text = run_ocr(roi)
                 if text:
                     detected_texts.append(text)
-                    cv2.putText(image, text, (x1, y1 - 10),
+                    cv2.putText(frame, text, (x1, max(y1 - 10,0)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
 
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(output_path, image)
-        return output_path, detected_texts
-    except Exception as e:
-        st.error(f"Error processing image: {e}")
-        return None, []
+        out.write(frame)
 
-# Video processing
-def predict_and_plot_video(video_path, output_path):
-    try:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            st.error(f"Error opening video file: {video_path}")
-            return None, []
+    cap.release()
+    out.release()
+    return output_path, detected_texts
 
-        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 25
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # safer codec for Streamlit
-        out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
-
-        detected_texts = []
-
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            results = model.predict(frame, device=device)
-            for result in results:
-                for box in result.boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    roi = frame[y1:y2, x1:x2]
-                    text = run_ocr(roi)
-                    if text:
-                        detected_texts.append(text)
-                        cv2.putText(frame, text, (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-
-            out.write(frame)
-
-        cap.release()
-        out.release()
-        return output_path, detected_texts
-    except Exception as e:
-        st.error(f"Error processing video: {e}")
-        return None, []
-
-# Handle uploaded file
+# Main display logic
 if uploaded_file is not None:
     input_path = os.path.join("temp", uploaded_file.name)
-    output_path = os.path.join("temp", f"output_{uploaded_file.name}")
-
     with open(input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    st.write("Processing...")
 
     if input_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+        output_path = os.path.join("temp", f"output_{uploaded_file.name}")
+        st.write("Processing video...")
         result_path, texts = predict_and_plot_video(input_path, output_path)
         if result_path:
-            st.success("Video processed successfully!")
             st.video(result_path)
             if texts:
                 st.subheader("Detected License Plate Numbers:")
                 st.write(list(set(texts)))
     else:
-        result_path, texts = predict_and_save_image(input_path, output_path)
-        if result_path:
-            st.image(Image.open(result_path))
-            if texts:
-                st.subheader("Detected License Plate Numbers:")
-                st.write(list(set(texts)))
-
-# If no file uploaded, process demo image
+        st.write("Processing image...")
+        image_rgb, texts = predict_and_save_image(input_path)
+        st.image(image_rgb)
+        if texts:
+            st.subheader("Detected License Plate Numbers:")
+            st.write(list(set(texts)))
 else:
-    if os.path.exists(demo_image_path):
-        st.info("No file uploaded. Showing processed demo image.")
-        output_demo_path = os.path.join("temp", "output_demo_image.jpg")
-        result_path, texts = predict_and_save_image(demo_image_path, output_demo_path)
-        if result_path:
-            st.image(Image.open(result_path))
-            if texts:
-                st.subheader("Detected License Plate Numbers:")
-                st.write(list(set(texts)))
+    # If no upload, process demo image
+    if os.path.exists(DEMO_IMAGE):
+        st.write("Showing demo image...")
+        image_rgb, texts = predict_and_save_image(DEMO_IMAGE)
+        st.image(image_rgb)
+        if texts:
+            st.subheader("Detected License Plate Numbers:")
+            st.write(list(set(texts)))
     else:
-        st.error("Demo image not found. Please add a demo image to the repo root.")
+        st.info("No demo image found in root folder.")
