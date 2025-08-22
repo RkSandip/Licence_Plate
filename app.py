@@ -81,11 +81,17 @@ def predict_and_plot_video(video_path):
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS)) or 25
 
-        # Use tempfile for Streamlit-friendly video
+        # Reduce size for Streamlit-friendly video
+        max_width = 640
+        if frame_width > max_width:
+            ratio = max_width / frame_width
+            frame_width = max_width
+            frame_height = int(frame_height * ratio)
+
         tmp_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         output_path = tmp_file.name
 
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 codec
+        fourcc = cv2.VideoWriter_fourcc(*"avc1")  # H.264 codec
         out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
         detected_texts = []
@@ -95,12 +101,15 @@ def predict_and_plot_video(video_path):
             if not ret:
                 break
 
+            # Resize for smaller output
+            if frame.shape[1] != frame_width:
+                frame = cv2.resize(frame, (frame_width, frame_height))
+
             results = model.predict(frame, device=device)
             for result in results:
                 for box in result.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
                     roi = frame[y1:y2, x1:x2]
                     text = run_ocr(roi)
                     if text:
@@ -112,11 +121,16 @@ def predict_and_plot_video(video_path):
 
         cap.release()
         out.release()
+
+        # Make sure the file is fully closed
+        tmp_file.close()
+
         return output_path, detected_texts
 
     except Exception as e:
         st.error(f"Error processing video: {e}")
         return None, []
+
 
 # Handle uploaded file
 if uploaded_file is not None:
@@ -142,3 +156,4 @@ if uploaded_file is not None:
             if texts:
                 st.subheader("Detected License Plate Numbers:")
                 st.write(list(set(texts)))
+
