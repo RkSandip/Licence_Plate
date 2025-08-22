@@ -6,13 +6,14 @@ import os
 import torch
 import easyocr
 
+# App title
 st.title("YOLO License Plate Detection (Image & Video)")
 
 # Detect device
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device=="cuda" else ""))
 
-# Initialize EasyOCR reader
+# Initialize EasyOCR
 reader = easyocr.Reader(['en'], gpu=(device=="cuda"))
 
 # Ensure temp directory exists
@@ -24,9 +25,12 @@ uploaded_file = st.file_uploader(
     type=["jpg", "jpeg", "png", "bmp", "mp4", "avi", "mov", "mkv"]
 )
 
+# Default demo image
+demo_image_path = "demo_image.jpg"  # place your demo image in root
+
 # Load YOLO model
 try:
-    model = YOLO("best.pt")  # Replace with your YOLO model
+    model = YOLO("best.pt")  # Replace with your trained YOLO model
 except Exception as e:
     st.error(f"Error loading YOLO model: {e}")
 
@@ -42,19 +46,16 @@ def predict_and_save_image(path, output_path):
         results = model.predict(path, device=device)
         image = cv2.imread(path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
         detected_texts = []
 
         for result in results:
             for box in result.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                # Draw bounding box
                 cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 roi = image[y1:y2, x1:x2]
                 text = run_ocr(roi)
                 if text:
                     detected_texts.append(text)
-                    # Draw text above the bounding box
                     cv2.putText(image, text, (x1, y1 - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
 
@@ -65,8 +66,8 @@ def predict_and_save_image(path, output_path):
         st.error(f"Error processing image: {e}")
         return None, []
 
-# Video processing
-def predict_and_plot_video(video_path, output_path):
+# Video processing (no preview, only download)
+def predict_and_save_video(video_path, output_path):
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -108,34 +109,34 @@ def predict_and_plot_video(video_path, output_path):
         st.error(f"Error processing video: {e}")
         return None, []
 
-# Handle file upload or demo image
+# Main logic
 if uploaded_file is not None:
     input_path = os.path.join("temp", uploaded_file.name)
     output_path = os.path.join("temp", f"output_{uploaded_file.name}")
+
     with open(input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    st.write("Processing...")
-
-    if input_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
-        result_path, texts = predict_and_plot_video(input_path, output_path)
-        if result_path:
-            st.video(result_path)
-            if texts:
-                st.subheader("Detected License Plate Numbers:")
-                st.write(texts)
-    else:
-        result_path, texts = predict_and_save_image(input_path, output_path)
-        if result_path:
-            st.image(Image.open(result_path))
-            if texts:
-                st.subheader("Detected License Plate Numbers:")
-                st.write(texts)
-
 else:
-    # Process default demo image
-    demo_image_path = "demo_image.jpg"  # Place your demo image in root
-    output_demo_path = os.path.join("temp", "output_demo.jpg")
-    result_path, texts = predict_and_save_image(demo_image_path, output_demo_path)
+    # Use demo image if no upload
+    input_path = demo_image_path
+    output_path = os.path.join("temp", f"output_demo.jpg")
+
+# Check type and process
+if input_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+    result_path, texts = predict_and_save_video(input_path, output_path)
+    if result_path:
+        st.success("Video processed! Download below:")
+        st.download_button(
+            label="Download Processed Video",
+            data=open(result_path, "rb"),
+            file_name="output_video.mp4",
+            mime="video/mp4"
+        )
+        if texts:
+            st.subheader("Detected License Plate Numbers:")
+            st.write(texts)
+else:
+    result_path, texts = predict_and_save_image(input_path, output_path)
     if result_path:
         st.image(Image.open(result_path))
         if texts:
