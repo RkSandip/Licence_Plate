@@ -124,10 +124,16 @@ if uploaded_file is not None:
     if input_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
         result_path, texts = predict_and_plot_video(input_path, output_path)
         if result_path:
-            st.video(result_path)
+            st.success("Video processed successfully!")
+            # Read video as bytes
+            with open(result_path, "rb") as f:
+                video_bytes = f.read()
+            st.video(video_bytes)
+        
             if texts:
                 st.subheader("Detected License Plate Numbers:")
-                st.write(texts)
+                st.write(list(set(texts)))
+
     else:
         result_path, texts = predict_and_save_image(input_path, output_path)
         if result_path:
@@ -135,3 +141,4 @@ if uploaded_file is not None:
             if texts:
                 st.subheader("Detected License Plate Numbers:")
                 st.write(texts)
+
