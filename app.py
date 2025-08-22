@@ -11,12 +11,15 @@ import tempfile
 # Streamlit app title
 st.title("YOLO License Plate Detection (Image & Video)")
 
-# Detect device (GPU if available)
+# Detect device (GPU or CPU)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 st.write(f"Using device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device=="cuda" else ""))
 
-# Initialize EasyOCR reader (only once)
+# OCR Engine: Only EasyOCR now
 reader = easyocr.Reader(['en'], gpu=(device=="cuda"))
+
+# Ensure temp directory exists
+os.makedirs("temp", exist_ok=True)
 
 # File uploader
 uploaded_file = st.file_uploader(
@@ -26,19 +29,19 @@ uploaded_file = st.file_uploader(
 
 # Load YOLO model
 try:
-    model = YOLO("best.pt")  # Replace with your trained YOLO model
+    model = YOLO("best.pt")  # Replace with your YOLO model
 except Exception as e:
     st.error(f"Error loading YOLO model: {e}")
 
 # OCR helper function
 def run_ocr(roi):
-    """Run EasyOCR and return only text"""
+    """Run OCR and return only text"""
     results = reader.readtext(roi)
     texts = [res[1] for res in results if res[1].strip() != ""]
     return " ".join(texts).strip()
 
 # Image processing
-def predict_and_save_image(path):
+def predict_and_save_image(path, output_path):
     try:
         results = model.predict(path, device=device)
         image = cv2.imread(path)
@@ -55,11 +58,11 @@ def predict_and_save_image(path):
                 text = run_ocr(roi)
                 if text:
                     detected_texts.append(text)
+                    cv2.putText(image, text, (x1, y1 - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
 
-        # Save to temporary file
-        tmp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        output_path = tmp_file.name
-        cv2.imwrite(output_path, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(output_path, image)
         return output_path, detected_texts
 
     except Exception as e:
@@ -71,16 +74,18 @@ def predict_and_plot_video(video_path):
     try:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            st.error("Error opening video file")
+            st.error(f"Error opening video file: {video_path}")
             return None, []
 
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS)) or 25
 
+        # Use tempfile for Streamlit-friendly video
         tmp_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         output_path = tmp_file.name
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 codec
         out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
         detected_texts = []
@@ -100,6 +105,8 @@ def predict_and_plot_video(video_path):
                     text = run_ocr(roi)
                     if text:
                         detected_texts.append(text)
+                        cv2.putText(frame, text, (x1, y1 - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
             out.write(frame)
 
@@ -113,22 +120,23 @@ def predict_and_plot_video(video_path):
 
 # Handle uploaded file
 if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_input:
-        tmp_input.write(uploaded_file.getbuffer())
-        input_path = tmp_input.name
-
+    input_path = os.path.join("temp", uploaded_file.name)
+    with open(input_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
     st.write("Processing...")
 
     if input_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
         result_path, texts = predict_and_plot_video(input_path)
         if result_path:
-            st.video(result_path)
+            st.success("Video processed successfully!")
+            st.video(result_path, format="video/mp4", start_time=0)
             if texts:
                 st.subheader("Detected License Plate Numbers:")
                 st.write(list(set(texts)))
 
     else:
-        result_path, texts = predict_and_save_image(input_path)
+        output_path = os.path.join("temp", f"output_{uploaded_file.name}")
+        result_path, texts = predict_and_save_image(input_path, output_path)
         if result_path:
             st.image(Image.open(result_path))
             if texts:
